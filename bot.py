@@ -12,8 +12,8 @@ from telegram.ext import (
 from openai import OpenAI
 
 # === КОНФИГУРАЦИЯ ===
-TELEGRAM_BOT_TOKEN = "7658044305:AAELLBjdKyQDlGGZojMth8VGSBlUG-tLq3s"
-OPENROUTER_API_KEY = "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"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 DB_PATH = "users_memory.db"
 INACTIVITY_TIMEOUT = 600  # 10 минут
 
@@ -39,7 +39,7 @@ def update_user(user_id, memory_piece, detected_gender=None):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     now = int(time.time())
-    
+
     cur.execute("SELECT memory FROM users WHERE user_id = ?", (user_id,))
     row = cur.fetchone()
     memory = row[0] + "\n" + memory_piece if row and row[0] else memory_piece
@@ -70,15 +70,7 @@ def get_user_memory(user_id):
     conn.close()
     return row[0] if row else ""
 
-def get_user_last_seen(user_id):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("SELECT last_seen FROM users WHERE user_id = ?", (user_id,))
-    row = cur.fetchone()
-    conn.close()
-    return int(row[0]) if row else 0
-
-# === ФУНКЦИИ ===
+# === ВСПОМОГАТЕЛЬНОЕ ===
 def detect_gender(text):
     if any(word in text.lower() for word in ["сделала", "родилась", "писала"]):
         return "female"
@@ -86,6 +78,7 @@ def detect_gender(text):
         return "male"
     return None
 
+# === ОБРАБОТКА СООБЩЕНИЙ ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Ну привет. Я Кайран Мурлин. Не фея добрых чувств и не твой виртуальный котик, чтобы мурлыкать.\n"
@@ -128,7 +121,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Ошибка: {str(e)}")
         await update.message.reply_text("Произошла ошибка. Попробуй позже.")
 
-# === НЕАКТИВНОСТЬ ===
+# === ОТСЛЕЖИВАНИЕ НЕАКТИВНОСТИ ===
 async def monitor_inactivity(app: Application):
     while True:
         now = int(time.time())
@@ -139,7 +132,7 @@ async def monitor_inactivity(app: Application):
         conn.close()
 
         for user_id, last_seen in users:
-            if now - last_seen >= INACTIVITY_TIMEOUT:
+            if now - last_seen >= 600:
                 try:
                     await app.bot.send_message(chat_id=user_id,
                         text="Что ж, я так понимаю ты отдыхаешь, ну отдыхай. Если что-то понадобится — я отвечу.")
@@ -149,21 +142,19 @@ async def monitor_inactivity(app: Application):
 
         await asyncio.sleep(60)
 
-# === ЗАПУСК ===
+# === ЗАПУСК С POLLING ===
 async def main():
     init_db()
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     asyncio.create_task(monitor_inactivity(app))
+
     await app.initialize()
     await app.start()
     await app.updater.start_polling()
+    await app.updater.idle()
 
 if __name__ == "__main__":
-    print("✅ Бот запущен (в режиме loop.run_forever)")
-    loop = asyncio.get_event_loop()
-    loop.create_task(main())
-    loop.run_forever()
+    asyncio.run(main())
